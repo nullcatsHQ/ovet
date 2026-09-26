@@ -7,28 +7,33 @@ import { corsMiddleware } from "./middleware/cors";
 import type { Env } from "./lib/types";
 import { ERROR_CODES } from "./lib/constants";
 
-const app = new Hono<{ Bindings: Env }>();
+const api = new Hono<{ Bindings: Env }>();
 
-app.use("*", corsMiddleware);
-
-app.get("/", (c) =>
+api.get("/", (c) =>
   c.json({
     name: "ovet",
     description: "YouTube channel lookup & analytics API",
     endpoints: [
-      "GET /channel/:handle",
-      "GET /channel/:handle/videos",
-      "GET /channel/:handle/popular",
-      "GET /channel/:handle/analytics",
-      "POST /channel/:handle/refresh",
-      "GET /health",
+      "GET /v1/channel/:handle",
+      "GET /v1/channel/:handle/videos",
+      "GET /v1/channel/:handle/popular",
+      "GET /v1/channel/:handle/analytics",
+      "POST /v1/channel/:handle/refresh",
+      "GET /v1/health",
     ],
   })
 );
 
-app.get("/health", (c) => c.json({ status: "ok", environment: c.env.ENVIRONMENT }));
+api.get("/health", (c) => c.json({ status: "ok", environment: c.env.ENVIRONMENT }));
 
-app.route("/channel", channel);
+api.route("/channel", channel);
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.use("*", corsMiddleware);
+
+app.route("/v1", api);
+app.route("/", api);
 
 app.notFound((c) => c.json({ error: "Not found", code: ERROR_CODES.NOT_FOUND }, 404));
 

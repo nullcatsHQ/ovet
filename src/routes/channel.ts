@@ -1,16 +1,19 @@
 import { Hono } from "hono";
-import { getDb } from "../db/client";
+import { dbMiddleware } from "../middleware/db";
 import { getChannelProfile, getChannelVideos, refreshChannel } from "../lib/orchestrate";
 import { enforceRateLimit } from "../middleware/rate-limit";
 import { logRequest } from "../lib/log";
 import { OvetError } from "../lib/types";
 import type { Env } from "../lib/types";
+import type { Db } from "../db/client";
 import { ERROR_CODES, DEFAULTS } from "../lib/constants";
 
-const channel = new Hono<{ Bindings: Env }>();
+const channel = new Hono<{ Bindings: Env; Variables: { db: Db } }>();
+
+channel.use("*", dbMiddleware);
 
 channel.use("*", async (c, next) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = c.get("db");
   const ip = c.req.header("cf-connecting-ip") ?? "unknown";
   const limit = Number(c.env.RATE_LIMIT_PER_MINUTE ?? String(DEFAULTS.RATE_LIMIT_PER_MINUTE));
 
@@ -38,7 +41,7 @@ function readHandle(c: any): string {
 }
 
 channel.get("/:handle", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = c.get("db");
   const handle = readHandle(c);
   const start = Date.now();
 
@@ -52,7 +55,7 @@ channel.get("/:handle", async (c) => {
 });
 
 channel.get("/:handle/videos", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = c.get("db");
   const handle = readHandle(c);
   const start = Date.now();
 
@@ -66,7 +69,7 @@ channel.get("/:handle/videos", async (c) => {
 });
 
 channel.get("/:handle/popular", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = c.get("db");
   const handle = readHandle(c);
   const start = Date.now();
 
@@ -80,7 +83,7 @@ channel.get("/:handle/popular", async (c) => {
 });
 
 channel.get("/:handle/analytics", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = c.get("db");
   const handle = readHandle(c);
   const start = Date.now();
 
@@ -109,7 +112,7 @@ channel.get("/:handle/analytics", async (c) => {
 });
 
 channel.post("/:handle/refresh", async (c) => {
-  const db = getDb(c.env.DATABASE_URL);
+  const db = c.get("db");
   const handle = readHandle(c);
   const start = Date.now();
 
@@ -122,7 +125,7 @@ channel.post("/:handle/refresh", async (c) => {
   }
 });
 
-function handleError(c: any, err: unknown, db: any, handle: string, start: number) {
+function handleError(c: any, err: unknown, db: Db, handle: string, start: number) {
   if (err instanceof OvetError) {
     c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, c.req.method, err.statusCode, Date.now() - start));
     return c.json({ error: err.message, code: err.code }, err.statusCode);
