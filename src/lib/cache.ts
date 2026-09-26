@@ -1,20 +1,16 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, gt } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { channelCache, videosCache } from "../db/schema";
 import type { ChannelProfile, VideoSummary } from "./types";
 
 export async function getCachedChannel(db: Db, channelId: string): Promise<ChannelProfile | null> {
   const rows = await db
-    .select()
+    .select({ data: channelCache.data })
     .from(channelCache)
-    .where(eq(channelCache.channelId, channelId))
+    .where(and(eq(channelCache.channelId, channelId), gt(channelCache.expiresAt, new Date())))
     .limit(1);
 
-  const row = rows[0];
-  if (!row) return null;
-  if (new Date(row.expiresAt) < new Date()) return null;
-
-  return row.data as ChannelProfile;
+  return (rows[0]?.data as ChannelProfile) ?? null;
 }
 
 export async function setCachedChannel(
@@ -40,16 +36,18 @@ export async function getCachedVideos(
   kind: "recent" | "popular"
 ): Promise<VideoSummary[] | null> {
   const rows = await db
-    .select()
+    .select({ data: videosCache.data })
     .from(videosCache)
-    .where(and(eq(videosCache.channelId, channelId), eq(videosCache.kind, kind)))
+    .where(
+      and(
+        eq(videosCache.channelId, channelId),
+        eq(videosCache.kind, kind),
+        gt(videosCache.expiresAt, new Date())
+      )
+    )
     .limit(1);
 
-  const row = rows[0];
-  if (!row) return null;
-  if (new Date(row.expiresAt) < new Date()) return null;
-
-  return row.data as VideoSummary[];
+  return (rows[0]?.data as VideoSummary[]) ?? null;
 }
 
 export async function setCachedVideos(

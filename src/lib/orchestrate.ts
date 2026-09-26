@@ -12,10 +12,17 @@ import {
 } from "./cache";
 import { OvetError } from "./types";
 import type { ChannelProfile, VideoSummary, Env } from "./types";
+import type { ResolvedInput } from "./resolve";
 import { ERROR_CODES, DEFAULTS } from "./constants";
 
 interface FetchOptions {
   bypassCache?: boolean;
+}
+
+interface ResolvedContext {
+  channelId: string | null;
+  resolved: ResolvedInput;
+  apiAvailable: boolean;
 }
 
 function isApiUnavailableError(err: unknown): boolean {
@@ -29,7 +36,7 @@ function readTtl(env: Env): number {
   return Number(env.CACHE_TTL_SECONDS ?? String(DEFAULTS.CACHE_TTL_SECONDS));
 }
 
-async function resolveWithFallback(rawInput: string, apiKey: string) {
+async function resolveWithFallback(rawInput: string, apiKey: string): Promise<ResolvedContext> {
   const resolved = resolveChannelInput(rawInput);
   let channelId: string | null = null;
   let apiAvailable = true;
@@ -47,14 +54,14 @@ async function resolveWithFallback(rawInput: string, apiKey: string) {
   return { channelId, resolved, apiAvailable };
 }
 
-export async function getChannelProfile(
+async function getChannelProfileResolved(
   db: Db,
-  rawInput: string,
+  ctx: ResolvedContext,
   env: Env,
-  options: FetchOptions = {}
+  options: FetchOptions
 ): Promise<ChannelProfile> {
   const ttl = readTtl(env);
-  const { channelId, resolved, apiAvailable } = await resolveWithFallback(rawInput, env.YOUTUBE_API_KEY);
+  const { channelId, resolved, apiAvailable } = ctx;
 
   if (options.bypassCache && channelId) {
     await deleteCachedChannel(db, channelId);
@@ -90,15 +97,15 @@ export async function getChannelProfile(
   return scraped;
 }
 
-export async function getChannelVideos(
+async function getChannelVideosResolved(
   db: Db,
-  rawInput: string,
+  ctx: ResolvedContext,
   kind: "recent" | "popular",
   env: Env,
-  options: FetchOptions = {}
+  options: FetchOptions
 ): Promise<VideoSummary[]> {
   const ttl = readTtl(env);
-  const { channelId, resolved, apiAvailable } = await resolveWithFallback(rawInput, env.YOUTUBE_API_KEY);
+  const { channelId, resolved, apiAvailable } = ctx;
 
   if (options.bypassCache && channelId) {
     await deleteCachedVideos(db, channelId, kind);
@@ -134,12 +141,80 @@ export async function getChannelVideos(
   return videos;
 }
 
-export async function refreshChannel(db: Db, rawInput: string, env: Env) {
-  const [profile, recent, popular] = await Promise.all([
-    getChannelProfile(db, rawInput, env, { bypassCache: true }),
-    getChannelVideos(db, rawInput, "recent", env, { bypassCache: true }),
-    getChannelVideos(db, rawInput, "popular", env, { bypassCache: true }),
+export async function getChannelProfile(
+  db: Db,
+  rawInput: string,
+  env: Env,
+  options: FetchOptions = {}
+): Promise<ChannelProfile> {
+  const ctx = await resolveWithFallback(rawInput, env.YOUTUBE_API_KEY);
+  return getChannelProfileResolved(db, ctx, env, options);
+}
+
+export async function getChannelVideos(
+  db: Db,
+  rawInput: string,
+  kind: "recent" | "popular",
+  env: Env,
+  options: FetchOptions = {}
+): Promise<VideoSummary[]> {
+  const ctx = await resolveWithFallback(rawInput, env.YOUTUBE_API_KEY);
+  return getChannelVideosResolved(db, ctx, kind, env, options);
+}
+
+export async function getChannelAnalytics(
+  db: Db,
+  rawInput: string,
+  env: Env,
+  options: FetchOptions = {}
+) {
+  const ctx = await resolveWithFallback(rawInput, env.YOUTUBE_API_KEY);
+
+  const [profile, recentVideos, popularVideos] = await Promise.all([
+    getChannelProfileResolved(db, ctx, env, options),
+    getChannelVideosResolved(db, ctx, "recent", env, options),
+    getChannelVideosResolved(db, ctx, "popular", env, options),
   ]);
 
-  return { profile, recentVideos: recent, popularVideos: popular };
+  return {
+    profile,
+    recentVideos,
+    popularVideos,
+    averageViewsPerVideo:
+      profile.totalViews && profile.videoCount
+        ? Math.round(profile.totalViews / profile.videoCount)
+        : null,
+  };
+}
+
+export async function refreshChannel(db: Db, rawInput: string, env: Env) {
+  const result = await getChannelAnalytics(db, rawInput, env, { bypassCache: true });
+  return { profile: result.profile, recentVideos: result.recentVideos, popularVideos: result.popularVideos };
+}
+
+export async function getTopVideo(
+  db: Db,
+  rawInput: string,
+  by: "latest" | "popular" | "likes",
+  env: Env
+): Promise<VideoSummary | null> {
+  const ctx = await resolveWithFallback(rawInput, env.YOUTUBE_API_KEY);
+  const kind = by === "latest" ? "recent" : "popular";
+  const videos = await getChannelVideosResolved(db, ctx, kind, env, {});
+
+  if (!videos.length) return null;
+
+  if (by === "likes") {
+    const withLikes = videos.filter((v) => v.likeCount !== null);
+    if (!withLikes.length) {
+      throw new OvetError(
+        "Like counts are unavailable for this channel right now (scrape fallback was used, which does not expose like counts)",
+        502,
+        ERROR_CODES.SCRAPE_PARSE_FAILED
+      );
+    }
+    return [...withLikes].sort((a, b) => b.likeCount! - a.likeCount!)[0]!;
+  }
+
+  return videos[0]!;
 }

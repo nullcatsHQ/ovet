@@ -17,6 +17,7 @@ api.get("/", (c) =>
       "GET /v1/channel/:handle",
       "GET /v1/channel/:handle/videos",
       "GET /v1/channel/:handle/popular",
+      "GET /v1/channel/:handle/top?by=latest|popular|likes",
       "GET /v1/channel/:handle/analytics",
       "POST /v1/channel/:handle/refresh",
       "GET /v1/health",

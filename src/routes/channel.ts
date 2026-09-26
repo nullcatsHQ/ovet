@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { dbMiddleware } from "../middleware/db";
-import { getChannelProfile, getChannelVideos, refreshChannel } from "../lib/orchestrate";
+import { getChannelProfile, getChannelVideos, getChannelAnalytics, refreshChannel, getTopVideo } from "../lib/orchestrate";
 import { enforceRateLimit } from "../middleware/rate-limit";
 import { logRequest } from "../lib/log";
 import { OvetError } from "../lib/types";
@@ -38,6 +38,13 @@ function readHandle(c: any): string {
     decoded = raw;
   }
   return decoded.trim();
+}
+
+function readTopBy(c: any): "latest" | "popular" | "likes" {
+  const raw = (c.req.query("by") ?? "latest").toLowerCase();
+  if (raw === "popular" || raw === "views") return "popular";
+  if (raw === "likes" || raw === "liked") return "likes";
+  return "latest";
 }
 
 channel.get("/:handle", async (c) => {
@@ -82,28 +89,40 @@ channel.get("/:handle/popular", async (c) => {
   }
 });
 
+channel.get("/:handle/top", async (c) => {
+  const db = c.get("db");
+  const handle = readHandle(c);
+  const by = readTopBy(c);
+  const start = Date.now();
+
+  try {
+    const video = await getTopVideo(db, handle, by, c.env);
+    if (!video) {
+      c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 404, Date.now() - start));
+      return c.json({ error: "No videos found for this channel", code: ERROR_CODES.CHANNEL_NOT_FOUND }, 404);
+    }
+
+    const response = {
+      channelQuery: handle,
+      by,
+      video,
+      url: `https://www.youtube.com/watch?v=${video.videoId}`,
+    };
+
+    c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
+    return c.json(response);
+  } catch (err) {
+    return handleError(c, err, db, handle, start);
+  }
+});
+
 channel.get("/:handle/analytics", async (c) => {
   const db = c.get("db");
   const handle = readHandle(c);
   const start = Date.now();
 
   try {
-    const [profile, recent, popular] = await Promise.all([
-      getChannelProfile(db, handle, c.env),
-      getChannelVideos(db, handle, "recent", c.env),
-      getChannelVideos(db, handle, "popular", c.env),
-    ]);
-
-    const response = {
-      profile,
-      recentVideos: recent,
-      popularVideos: popular,
-      averageViewsPerVideo:
-        profile.totalViews && profile.videoCount
-          ? Math.round(profile.totalViews / profile.videoCount)
-          : null,
-    };
-
+    const response = await getChannelAnalytics(db, handle, c.env);
     c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
     return c.json(response);
   } catch (err) {
