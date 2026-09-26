@@ -151,6 +151,42 @@ export async function getChannelProfile(
   return getChannelProfileResolved(db, ctx, env, options);
 }
 
+function withWatchUrl(video: VideoSummary) {
+  return { ...video, url: `https://www.youtube.com/watch?v=${video.videoId}` };
+}
+
+function mostLiked(videos: VideoSummary[]): VideoSummary | null {
+  const withLikes = videos.filter((v) => v.likeCount !== null);
+  if (!withLikes.length) return null;
+  return [...withLikes].sort((a, b) => b.likeCount! - a.likeCount!)[0]!;
+}
+
+export async function getChannelProfileWithLatestVideo(
+  db: Db,
+  rawInput: string,
+  env: Env,
+  options: FetchOptions = {}
+) {
+  const ctx = await resolveWithFallback(rawInput, env.YOUTUBE_API_KEY);
+
+  const [profile, recentVideos, popularVideos] = await Promise.all([
+    getChannelProfileResolved(db, ctx, env, options),
+    getChannelVideosResolved(db, ctx, "recent", env, options),
+    getChannelVideosResolved(db, ctx, "popular", env, options),
+  ]);
+
+  const latestVideo = recentVideos[0] ?? null;
+  const mostPopularVideo = popularVideos[0] ?? null;
+  const mostLikedVideo = mostLiked([...recentVideos, ...popularVideos]);
+
+  return {
+    ...profile,
+    latestVideo: latestVideo ? withWatchUrl(latestVideo) : null,
+    mostPopularVideo: mostPopularVideo ? withWatchUrl(mostPopularVideo) : null,
+    mostLikedVideo: mostLikedVideo ? withWatchUrl(mostLikedVideo) : null,
+  };
+}
+
 export async function getChannelVideos(
   db: Db,
   rawInput: string,
@@ -205,15 +241,15 @@ export async function getTopVideo(
   if (!videos.length) return null;
 
   if (by === "likes") {
-    const withLikes = videos.filter((v) => v.likeCount !== null);
-    if (!withLikes.length) {
+    const video = mostLiked(videos);
+    if (!video) {
       throw new OvetError(
         "Like counts are unavailable for this channel right now (scrape fallback was used, which does not expose like counts)",
         502,
         ERROR_CODES.SCRAPE_PARSE_FAILED
       );
     }
-    return [...withLikes].sort((a, b) => b.likeCount! - a.likeCount!)[0]!;
+    return video;
   }
 
   return videos[0]!;

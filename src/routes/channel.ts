@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { dbMiddleware } from "../middleware/db";
-import { getChannelProfile, getChannelVideos, getChannelAnalytics, refreshChannel, getTopVideo } from "../lib/orchestrate";
+import { getChannelProfileWithLatestVideo, getChannelVideos, getChannelAnalytics, refreshChannel, getTopVideo } from "../lib/orchestrate";
 import { enforceRateLimit } from "../middleware/rate-limit";
 import { logRequest } from "../lib/log";
 import { OvetError } from "../lib/types";
@@ -53,7 +53,7 @@ channel.get("/:handle", async (c) => {
   const start = Date.now();
 
   try {
-    const profile = await getChannelProfile(db, handle, c.env);
+    const profile = await getChannelProfileWithLatestVideo(db, handle, c.env);
     c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
     return c.json(profile);
   } catch (err) {
