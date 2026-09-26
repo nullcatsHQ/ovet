@@ -1,0 +1,2 @@
+YOUTUBE_API_KEY=your-api-key-here
+DATABASE_URL=postgres://user:password@ep-xxxx-pooler.region.aws.neon.tech/dbname?sslmode=require
