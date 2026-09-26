@@ -162,7 +162,10 @@ export async function fetchChannelVideos(
     }[];
   };
 
-  return (videosData.items ?? []).map((v) => ({
+  const byId = new Map((videosData.items ?? []).map((v) => [v.id, v]));
+  const orderedItems = ids.map((id) => byId.get(id)).filter((v): v is NonNullable<typeof v> => v !== undefined);
+
+  return orderedItems.map((v) => ({
     videoId: v.id,
     title: v.snippet.title,
     description: v.snippet.description,

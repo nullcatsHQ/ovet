@@ -235,13 +235,16 @@ export async function getTopVideo(
   env: Env
 ): Promise<VideoSummary | null> {
   const ctx = await resolveWithFallback(rawInput, env.YOUTUBE_API_KEY);
-  const kind = by === "latest" ? "recent" : "popular";
-  const videos = await getChannelVideosResolved(db, ctx, kind, env, {});
-
-  if (!videos.length) return null;
 
   if (by === "likes") {
-    const video = mostLiked(videos);
+    const [recentVideos, popularVideos] = await Promise.all([
+      getChannelVideosResolved(db, ctx, "recent", env, {}),
+      getChannelVideosResolved(db, ctx, "popular", env, {}),
+    ]);
+
+    if (!recentVideos.length && !popularVideos.length) return null;
+
+    const video = mostLiked([...recentVideos, ...popularVideos]);
     if (!video) {
       throw new OvetError(
         "Like counts are unavailable for this channel right now (scrape fallback was used, which does not expose like counts)",
@@ -251,6 +254,11 @@ export async function getTopVideo(
     }
     return video;
   }
+
+  const kind = by === "latest" ? "recent" : "popular";
+  const videos = await getChannelVideosResolved(db, ctx, kind, env, {});
+
+  if (!videos.length) return null;
 
   return videos[0]!;
 }
