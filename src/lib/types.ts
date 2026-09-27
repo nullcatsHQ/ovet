@@ -3,6 +3,7 @@ export interface Env {
   DATABASE_URL: string;
   ENVIRONMENT: string;
   CACHE_TTL_SECONDS: string;
+  HANDLE_RESOLUTION_TTL_SECONDS: string;
   RATE_LIMIT_PER_MINUTE: string;
   SCRAPE_FALLBACK_ENABLED: string;
 }

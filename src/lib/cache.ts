@@ -1,16 +1,27 @@
 import { eq, and, gt } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { channelCache, videosCache } from "../db/schema";
+import { channelCache, videosCache, handleResolutionCache } from "../db/schema";
 import type { ChannelProfile, VideoSummary } from "./types";
 
-export async function getCachedChannel(db: Db, channelId: string): Promise<ChannelProfile | null> {
+interface CacheEntry<T> {
+  data: T;
+  isStale: boolean;
+}
+
+export async function getCachedChannelAnyFreshness(
+  db: Db,
+  channelId: string
+): Promise<CacheEntry<ChannelProfile> | null> {
   const rows = await db
-    .select({ data: channelCache.data })
+    .select({ data: channelCache.data, expiresAt: channelCache.expiresAt })
     .from(channelCache)
-    .where(and(eq(channelCache.channelId, channelId), gt(channelCache.expiresAt, new Date())))
+    .where(eq(channelCache.channelId, channelId))
     .limit(1);
 
-  return (rows[0]?.data as ChannelProfile) ?? null;
+  const row = rows[0];
+  if (!row) return null;
+
+  return { data: row.data as ChannelProfile, isStale: row.expiresAt < new Date() };
 }
 
 export async function setCachedChannel(
@@ -30,24 +41,21 @@ export async function setCachedChannel(
     });
 }
 
-export async function getCachedVideos(
+export async function getCachedVideosAnyFreshness(
   db: Db,
   channelId: string,
   kind: "recent" | "popular"
-): Promise<VideoSummary[] | null> {
+): Promise<CacheEntry<VideoSummary[]> | null> {
   const rows = await db
-    .select({ data: videosCache.data })
+    .select({ data: videosCache.data, expiresAt: videosCache.expiresAt })
     .from(videosCache)
-    .where(
-      and(
-        eq(videosCache.channelId, channelId),
-        eq(videosCache.kind, kind),
-        gt(videosCache.expiresAt, new Date())
-      )
-    )
+    .where(and(eq(videosCache.channelId, channelId), eq(videosCache.kind, kind)))
     .limit(1);
 
-  return (rows[0]?.data as VideoSummary[]) ?? null;
+  const row = rows[0];
+  if (!row) return null;
+
+  return { data: row.data as VideoSummary[], isStale: row.expiresAt < new Date() };
 }
 
 export async function setCachedVideos(
@@ -81,4 +89,31 @@ export async function deleteCachedVideos(db: Db, channelId: string, kind?: "rece
   } else {
     await db.delete(videosCache).where(eq(videosCache.channelId, channelId));
   }
+}
+
+export async function getCachedHandleResolution(db: Db, lookupKey: string): Promise<string | null> {
+  const rows = await db
+    .select({ channelId: handleResolutionCache.channelId })
+    .from(handleResolutionCache)
+    .where(and(eq(handleResolutionCache.lookupKey, lookupKey), gt(handleResolutionCache.expiresAt, new Date())))
+    .limit(1);
+
+  return rows[0]?.channelId ?? null;
+}
+
+export async function setCachedHandleResolution(
+  db: Db,
+  lookupKey: string,
+  channelId: string,
+  ttlSeconds: number
+) {
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+
+  await db
+    .insert(handleResolutionCache)
+    .values({ lookupKey, channelId, expiresAt })
+    .onConflictDoUpdate({
+      target: handleResolutionCache.lookupKey,
+      set: { channelId, fetchedAt: new Date(), expiresAt },
+    });
 }

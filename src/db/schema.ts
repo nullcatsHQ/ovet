@@ -9,6 +9,14 @@ export const channelCache = pgTable("channel_cache", {
   expiresAt: timestamp("expires_at").notNull(),
 });
 
+export const handleResolutionCache = pgTable("handle_resolution_cache", {
+  id: serial("id").primaryKey(),
+  lookupKey: text("lookup_key").notNull().unique(),
+  channelId: text("channel_id").notNull(),
+  fetchedAt: timestamp("fetched_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+});
+
 export const videosCache = pgTable(
   "videos_cache",
   {

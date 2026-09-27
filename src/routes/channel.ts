@@ -53,7 +53,9 @@ channel.get("/:handle", async (c) => {
   const start = Date.now();
 
   try {
-    const profile = await getChannelProfileWithLatestVideo(db, handle, c.env);
+    const profile = await getChannelProfileWithLatestVideo(db, handle, c.env, {
+      waitUntil: (p) => c.executionCtx.waitUntil(p),
+    });
     c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
     return c.json(profile);
   } catch (err) {
@@ -67,7 +69,9 @@ channel.get("/:handle/videos", async (c) => {
   const start = Date.now();
 
   try {
-    const videos = await getChannelVideos(db, handle, "recent", c.env);
+    const videos = await getChannelVideos(db, handle, "recent", c.env, {
+      waitUntil: (p) => c.executionCtx.waitUntil(p),
+    });
     c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
     return c.json({ channelQuery: handle, kind: "recent", videos });
   } catch (err) {
@@ -81,7 +85,9 @@ channel.get("/:handle/popular", async (c) => {
   const start = Date.now();
 
   try {
-    const videos = await getChannelVideos(db, handle, "popular", c.env);
+    const videos = await getChannelVideos(db, handle, "popular", c.env, {
+      waitUntil: (p) => c.executionCtx.waitUntil(p),
+    });
     c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
     return c.json({ channelQuery: handle, kind: "popular", videos });
   } catch (err) {
@@ -96,7 +102,9 @@ channel.get("/:handle/top", async (c) => {
   const start = Date.now();
 
   try {
-    const video = await getTopVideo(db, handle, by, c.env);
+    const video = await getTopVideo(db, handle, by, c.env, {
+      waitUntil: (p) => c.executionCtx.waitUntil(p),
+    });
     if (!video) {
       c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 404, Date.now() - start));
       return c.json({ error: "No videos found for this channel", code: ERROR_CODES.CHANNEL_NOT_FOUND }, 404);
@@ -122,7 +130,9 @@ channel.get("/:handle/analytics", async (c) => {
   const start = Date.now();
 
   try {
-    const response = await getChannelAnalytics(db, handle, c.env);
+    const response = await getChannelAnalytics(db, handle, c.env, {
+      waitUntil: (p) => c.executionCtx.waitUntil(p),
+    });
     c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
     return c.json(response);
   } catch (err) {
