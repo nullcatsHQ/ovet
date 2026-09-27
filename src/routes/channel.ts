@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { dbMiddleware } from "../middleware/db";
-import { getChannelProfileWithLatestVideo, getChannelVideos, getChannelAnalytics, refreshChannel, getTopVideo } from "../lib/orchestrate";
+import { getChannelProfileWithLatestVideo, getChannelVideos, getChannelVideosPage, getChannelAnalytics, refreshChannel, getTopVideo } from "../lib/orchestrate";
 import { enforceRateLimit } from "../middleware/rate-limit";
 import { logRequest } from "../lib/log";
 import { OvetError } from "../lib/types";
@@ -66,14 +66,21 @@ channel.get("/:handle", async (c) => {
 channel.get("/:handle/videos", async (c) => {
   const db = c.get("db");
   const handle = readHandle(c);
+  const pageToken = c.req.query("pageToken") ?? null;
   const start = Date.now();
 
   try {
+    if (pageToken) {
+      const page = await getChannelVideosPage(db, handle, "recent", c.env, pageToken);
+      c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
+      return c.json({ channelQuery: handle, kind: "recent", videos: page.videos, nextPageToken: page.nextPageToken });
+    }
+
     const videos = await getChannelVideos(db, handle, "recent", c.env, {
       waitUntil: (p) => c.executionCtx.waitUntil(p),
     });
     c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
-    return c.json({ channelQuery: handle, kind: "recent", videos });
+    return c.json({ channelQuery: handle, kind: "recent", videos, nextPageToken: null });
   } catch (err) {
     return handleError(c, err, db, handle, start);
   }
@@ -82,14 +89,21 @@ channel.get("/:handle/videos", async (c) => {
 channel.get("/:handle/popular", async (c) => {
   const db = c.get("db");
   const handle = readHandle(c);
+  const pageToken = c.req.query("pageToken") ?? null;
   const start = Date.now();
 
   try {
+    if (pageToken) {
+      const page = await getChannelVideosPage(db, handle, "popular", c.env, pageToken);
+      c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
+      return c.json({ channelQuery: handle, kind: "popular", videos: page.videos, nextPageToken: page.nextPageToken });
+    }
+
     const videos = await getChannelVideos(db, handle, "popular", c.env, {
       waitUntil: (p) => c.executionCtx.waitUntil(p),
     });
     c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 200, Date.now() - start));
-    return c.json({ channelQuery: handle, kind: "popular", videos });
+    return c.json({ channelQuery: handle, kind: "popular", videos, nextPageToken: null });
   } catch (err) {
     return handleError(c, err, db, handle, start);
   }

@@ -1,7 +1,7 @@
 import { eq, and, gt } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { channelCache, videosCache, handleResolutionCache } from "../db/schema";
-import type { ChannelProfile, VideoSummary } from "./types";
+import type { ChannelProfile, VideoSummary, VideoPage } from "./types";
 
 interface CacheEntry<T> {
   data: T;
@@ -45,7 +45,7 @@ export async function getCachedVideosAnyFreshness(
   db: Db,
   channelId: string,
   kind: "recent" | "popular"
-): Promise<CacheEntry<VideoSummary[]> | null> {
+): Promise<CacheEntry<VideoPage> | null> {
   const rows = await db
     .select({ data: videosCache.data, expiresAt: videosCache.expiresAt })
     .from(videosCache)
@@ -55,14 +55,17 @@ export async function getCachedVideosAnyFreshness(
   const row = rows[0];
   if (!row) return null;
 
-  return { data: row.data as VideoSummary[], isStale: row.expiresAt < new Date() };
+  const raw = row.data as VideoSummary[] | VideoPage;
+  const data: VideoPage = Array.isArray(raw) ? { videos: raw, nextPageToken: null } : raw;
+
+  return { data, isStale: row.expiresAt < new Date() };
 }
 
 export async function setCachedVideos(
   db: Db,
   channelId: string,
   kind: "recent" | "popular",
-  data: VideoSummary[],
+  data: VideoPage,
   source: "api" | "scrape",
   ttlSeconds: number
 ) {

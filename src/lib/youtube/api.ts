@@ -1,5 +1,5 @@
 import { OvetError } from "../types";
-import type { ChannelProfile, VideoSummary } from "../types";
+import type { ChannelProfile, VideoSummary, VideoPage } from "../types";
 import type { ResolvedInput } from "../resolve";
 import { ERROR_CODES, DEFAULTS } from "../constants";
 
@@ -70,7 +70,7 @@ export async function resolveToChannelId(resolved: ResolvedInput, apiKey: string
 export async function fetchChannelProfile(channelId: string, apiKey: string): Promise<ChannelProfile> {
   const data = (await ytFetch(
     "channels",
-    { part: "snippet,statistics,brandingSettings", id: channelId },
+    { part: "snippet,statistics,brandingSettings,topicDetails,status", id: channelId },
     apiKey
   )) as {
     items?: {
@@ -82,6 +82,7 @@ export async function fetchChannelProfile(channelId: string, apiKey: string): Pr
         publishedAt: string;
         thumbnails?: { high?: { url: string } };
         country?: string;
+        defaultLanguage?: string;
       };
       statistics: {
         subscriberCount?: string;
@@ -91,6 +92,13 @@ export async function fetchChannelProfile(channelId: string, apiKey: string): Pr
       };
       brandingSettings?: {
         image?: { bannerExternalUrl?: string };
+        channel?: { keywords?: string };
+      };
+      topicDetails?: {
+        topicCategories?: string[];
+      };
+      status?: {
+        madeForKids?: boolean;
       };
     }[];
   };
@@ -99,6 +107,9 @@ export async function fetchChannelProfile(channelId: string, apiKey: string): Pr
   if (!item) {
     throw new OvetError(`Channel not found: ${channelId}`, 404, ERROR_CODES.CHANNEL_NOT_FOUND);
   }
+
+  const keywordsRaw = item.brandingSettings?.channel?.keywords;
+  const keywords = keywordsRaw ? parseKeywords(keywordsRaw) : null;
 
   return {
     channelId: item.id,
@@ -118,9 +129,18 @@ export async function fetchChannelProfile(channelId: string, apiKey: string): Pr
     country: item.snippet.country ?? null,
     publishedAt: item.snippet.publishedAt,
     customUrl: item.snippet.customUrl ?? null,
+    defaultLanguage: item.snippet.defaultLanguage ?? null,
+    keywords,
+    topicCategories: item.topicDetails?.topicCategories?.length ? item.topicDetails.topicCategories : null,
+    madeForKids: item.status?.madeForKids ?? null,
     source: "api",
     fetchedAt: new Date().toISOString(),
   };
+}
+
+function parseKeywords(raw: string): string[] {
+  const matches = raw.match(/"[^"]+"|\S+/g) ?? [];
+  return matches.map((m) => m.replace(/^"|"$/g, "").trim()).filter(Boolean);
 }
 
 export async function fetchChannelVideos(
@@ -129,20 +149,33 @@ export async function fetchChannelVideos(
   apiKey: string,
   maxResults = DEFAULTS.VIDEO_MAX_RESULTS
 ): Promise<VideoSummary[]> {
-  const searchData = (await ytFetch(
-    "search",
-    {
-      part: "id",
-      channelId,
-      type: "video",
-      order: kind === "recent" ? "date" : "viewCount",
-      maxResults: String(maxResults),
-    },
-    apiKey
-  )) as { items?: { id: { videoId: string } }[] };
+  const page = await fetchChannelVideosPage(channelId, kind, apiKey, maxResults, null);
+  return page.videos;
+}
+
+export async function fetchChannelVideosPage(
+  channelId: string,
+  kind: "recent" | "popular",
+  apiKey: string,
+  maxResults = DEFAULTS.VIDEO_MAX_RESULTS,
+  pageToken: string | null = null
+): Promise<VideoPage> {
+  const searchParams: Record<string, string> = {
+    part: "id",
+    channelId,
+    type: "video",
+    order: kind === "recent" ? "date" : "viewCount",
+    maxResults: String(maxResults),
+  };
+  if (pageToken) searchParams.pageToken = pageToken;
+
+  const searchData = (await ytFetch("search", searchParams, apiKey)) as {
+    items?: { id: { videoId: string } }[];
+    nextPageToken?: string;
+  };
 
   const ids = (searchData.items ?? []).map((i) => i.id.videoId).filter(Boolean);
-  if (!ids.length) return [];
+  if (!ids.length) return { videos: [], nextPageToken: null };
 
   const videosData = (await ytFetch(
     "videos",
@@ -156,8 +189,10 @@ export async function fetchChannelVideos(
         description: string;
         publishedAt: string;
         thumbnails?: { high?: { url: string }; medium?: { url: string } };
+        tags?: string[];
+        categoryId?: string;
       };
-      statistics: { viewCount?: string; likeCount?: string };
+      statistics: { viewCount?: string; likeCount?: string; commentCount?: string };
       contentDetails: { duration: string };
     }[];
   };
@@ -165,7 +200,7 @@ export async function fetchChannelVideos(
   const byId = new Map((videosData.items ?? []).map((v) => [v.id, v]));
   const orderedItems = ids.map((id) => byId.get(id)).filter((v): v is NonNullable<typeof v> => v !== undefined);
 
-  return orderedItems.map((v) => ({
+  const videos = orderedItems.map((v) => ({
     videoId: v.id,
     title: v.snippet.title,
     description: v.snippet.description,
@@ -173,8 +208,13 @@ export async function fetchChannelVideos(
     publishedAt: v.snippet.publishedAt,
     viewCount: v.statistics.viewCount ? Number(v.statistics.viewCount) : null,
     likeCount: v.statistics.likeCount ? Number(v.statistics.likeCount) : null,
+    commentCount: v.statistics.commentCount ? Number(v.statistics.commentCount) : null,
     durationSeconds: parseIsoDuration(v.contentDetails.duration),
+    tags: v.snippet.tags?.length ? v.snippet.tags : null,
+    categoryId: v.snippet.categoryId ?? null,
   }));
+
+  return { videos, nextPageToken: searchData.nextPageToken ?? null };
 }
 
 function parseIsoDuration(iso: string): number | null {

@@ -22,6 +22,10 @@ export interface ChannelProfile {
   country: string | null;
   publishedAt: string | null;
   customUrl: string | null;
+  defaultLanguage: string | null;
+  keywords: string[] | null;
+  topicCategories: string[] | null;
+  madeForKids: boolean | null;
   source: "api" | "scrape";
   fetchedAt: string;
 }
@@ -34,7 +38,15 @@ export interface VideoSummary {
   publishedAt: string;
   viewCount: number | null;
   likeCount: number | null;
+  commentCount: number | null;
   durationSeconds: number | null;
+  tags: string[] | null;
+  categoryId: string | null;
+}
+
+export interface VideoPage {
+  videos: VideoSummary[];
+  nextPageToken: string | null;
 }
 
 export interface ChannelVideosResponse {

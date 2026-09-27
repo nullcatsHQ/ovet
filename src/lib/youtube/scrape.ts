@@ -65,6 +65,7 @@ export async function scrapeChannelProfile(resolved: ResolvedInput): Promise<Cha
 
   const metadata = data?.metadata?.channelMetadataRenderer;
   const header = data?.header?.pageHeaderRenderer ?? data?.header?.c4TabbedHeaderRenderer;
+  const microformat = data?.microformat?.microformatDataRenderer;
 
   if (!metadata) {
     throw new OvetError("Channel not found or page structure unrecognized", 404, ERROR_CODES.CHANNEL_NOT_FOUND);
@@ -72,6 +73,13 @@ export async function scrapeChannelProfile(resolved: ResolvedInput): Promise<Cha
 
   const subText: string | undefined =
     header?.subscriberCountText?.simpleText ?? header?.subscriberCountText?.runs?.[0]?.text;
+
+  const familySafe =
+    typeof metadata.isFamilySafe === "boolean"
+      ? metadata.isFamilySafe
+      : typeof microformat?.familySafe === "boolean"
+        ? microformat.familySafe
+        : null;
 
   return {
     channelId: metadata.externalId ?? "",
@@ -87,6 +95,12 @@ export async function scrapeChannelProfile(resolved: ResolvedInput): Promise<Cha
     country: metadata.country ?? null,
     publishedAt: null,
     customUrl: metadata.vanityChannelUrl ?? null,
+    defaultLanguage: null,
+    keywords: Array.isArray(metadata.keywords)
+      ? metadata.keywords.filter((k: unknown) => typeof k === "string" && k.trim())
+      : null,
+    topicCategories: null,
+    madeForKids: familySafe,
     source: "scrape",
     fetchedAt: new Date().toISOString(),
   };
@@ -147,7 +161,10 @@ export async function scrapeChannelVideos(
       publishedAt: v.publishedTimeText?.simpleText ?? "",
       viewCount: parseApproxCount(v.viewCountText?.simpleText),
       likeCount: null,
+      commentCount: null,
       durationSeconds: null,
+      tags: null,
+      categoryId: null,
     });
   }
 
