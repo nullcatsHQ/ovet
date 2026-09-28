@@ -1,11 +1,18 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { rateLimits } from "../db/schema";
-import { OvetError } from "../lib/types";
-import { ERROR_CODES, DEFAULTS } from "../lib/constants";
+import { DEFAULTS } from "../lib/constants";
 
-export async function enforceRateLimit(db: Db, ip: string, limitPerMinute: number) {
+export interface RateLimitResult {
+  limit: number;
+  remaining: number;
+  resetAt: Date;
+  exceeded: boolean;
+}
+
+export async function checkRateLimit(db: Db, ip: string, limitPerMinute: number): Promise<RateLimitResult> {
   const windowStart = new Date(Math.floor(Date.now() / 60_000) * 60_000);
+  const resetAt = new Date(windowStart.getTime() + 60_000);
 
   const rows = await db
     .insert(rateLimits)
@@ -17,10 +24,14 @@ export async function enforceRateLimit(db: Db, ip: string, limitPerMinute: numbe
     .returning({ count: rateLimits.count });
 
   const count = rows[0]?.count ?? 1;
+  const remaining = Math.max(0, limitPerMinute - count);
 
-  if (count > limitPerMinute) {
-    throw new OvetError("Rate limit exceeded. Try again shortly.", 429, ERROR_CODES.RATE_LIMITED);
-  }
+  return {
+    limit: limitPerMinute,
+    remaining,
+    resetAt,
+    exceeded: count > limitPerMinute,
+  };
 }
 
 export async function cleanupOldRateLimits(db: Db, olderThanMinutes = DEFAULTS.RATE_LIMIT_CLEANUP_MINUTES) {

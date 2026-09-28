@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { dbMiddleware } from "../middleware/db";
 import { getChannelProfileWithLatestVideo, getChannelVideos, getChannelVideosPage, getChannelAnalytics, refreshChannel, getTopVideo } from "../lib/orchestrate";
-import { enforceRateLimit } from "../middleware/rate-limit";
+import { checkRateLimit } from "../middleware/rate-limit";
 import { logRequest } from "../lib/log";
 import { OvetError } from "../lib/types";
 import type { Env } from "../lib/types";
@@ -17,13 +17,19 @@ channel.use("*", async (c, next) => {
   const ip = c.req.header("cf-connecting-ip") ?? "unknown";
   const limit = Number(c.env.RATE_LIMIT_PER_MINUTE ?? String(DEFAULTS.RATE_LIMIT_PER_MINUTE));
 
-  try {
-    await enforceRateLimit(db, ip, limit);
-  } catch (err) {
-    if (err instanceof OvetError) {
-      return c.json({ error: err.message, code: err.code }, err.statusCode as any);
-    }
-    throw err;
+  const result = await checkRateLimit(db, ip, limit);
+
+  c.header("X-RateLimit-Limit", String(result.limit));
+  c.header("X-RateLimit-Remaining", String(result.remaining));
+  c.header("X-RateLimit-Reset", String(Math.ceil(result.resetAt.getTime() / 1000)));
+
+  if (result.exceeded) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((result.resetAt.getTime() - Date.now()) / 1000));
+    c.header("Retry-After", String(retryAfterSeconds));
+    return c.json(
+      { error: "Rate limit exceeded. Try again shortly.", code: ERROR_CODES.RATE_LIMITED },
+      429
+    );
   }
 
   await next();
