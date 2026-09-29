@@ -4,6 +4,7 @@ import { getDb } from "./db/client";
 import { cleanupExpiredCache } from "./lib/cleanup";
 import { cleanupOldRateLimits } from "./middleware/rate-limit";
 import { corsMiddleware } from "./middleware/cors";
+import { OvetError } from "./lib/types";
 import type { Env } from "./lib/types";
 import { ERROR_CODES } from "./lib/constants";
 
@@ -39,6 +40,9 @@ app.route("/", api);
 app.notFound((c) => c.json({ error: "Not found", code: ERROR_CODES.NOT_FOUND }, 404));
 
 app.onError((err, c) => {
+  if (err instanceof OvetError) {
+    return c.json({ error: err.message, code: err.code }, err.statusCode as any);
+  }
   console.error("Unhandled app error:", err);
   return c.json({ error: "Internal server error", code: ERROR_CODES.INTERNAL_ERROR }, 500);
 });

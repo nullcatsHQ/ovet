@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { dbMiddleware } from "../middleware/db";
 import { getChannelProfileWithLatestVideo, getChannelVideos, getChannelVideosPage, getChannelAnalytics, refreshChannel, getTopVideo } from "../lib/orchestrate";
 import { checkRateLimit } from "../middleware/rate-limit";
+import { refreshAuthMiddleware } from "../middleware/auth";
 import { logRequest } from "../lib/log";
 import { OvetError } from "../lib/types";
 import type { Env } from "../lib/types";
@@ -46,11 +47,28 @@ function readHandle(c: any): string {
   return decoded.trim();
 }
 
-function readTopBy(c: any): "latest" | "popular" | "likes" {
-  const raw = (c.req.query("by") ?? "latest").toLowerCase();
-  if (raw === "popular" || raw === "views") return "popular";
-  if (raw === "likes" || raw === "liked") return "likes";
-  return "latest";
+function readTopBy(c: any): { by: "latest" | "popular" | "likes"; invalid: boolean } {
+  const raw = c.req.query("by");
+  if (raw === undefined) return { by: "latest", invalid: false };
+
+  const normalized = raw.toLowerCase();
+  if (normalized === "latest" || normalized === "recent") return { by: "latest", invalid: false };
+  if (normalized === "popular" || normalized === "views") return { by: "popular", invalid: false };
+  if (normalized === "likes" || normalized === "liked") return { by: "likes", invalid: false };
+
+  return { by: "latest", invalid: true };
+}
+
+function readPageToken(c: any): { token: string | null; invalid: boolean } {
+  const raw = c.req.query("pageToken");
+  if (raw === undefined) return { token: null, invalid: false };
+
+  const trimmed = raw.trim();
+  if (!trimmed) return { token: null, invalid: true };
+  if (trimmed.length > 100) return { token: null, invalid: true };
+  if (!/^[A-Za-z0-9_=-]+$/.test(trimmed)) return { token: null, invalid: true };
+
+  return { token: trimmed, invalid: false };
 }
 
 channel.get("/:handle", async (c) => {
@@ -72,8 +90,13 @@ channel.get("/:handle", async (c) => {
 channel.get("/:handle/videos", async (c) => {
   const db = c.get("db");
   const handle = readHandle(c);
-  const pageToken = c.req.query("pageToken") ?? null;
+  const { token: pageToken, invalid: invalidToken } = readPageToken(c);
   const start = Date.now();
+
+  if (invalidToken) {
+    c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 400, Date.now() - start));
+    return c.json({ error: "Invalid pageToken", code: ERROR_CODES.INVALID_INPUT }, 400);
+  }
 
   try {
     if (pageToken) {
@@ -95,8 +118,13 @@ channel.get("/:handle/videos", async (c) => {
 channel.get("/:handle/popular", async (c) => {
   const db = c.get("db");
   const handle = readHandle(c);
-  const pageToken = c.req.query("pageToken") ?? null;
+  const { token: pageToken, invalid: invalidToken } = readPageToken(c);
   const start = Date.now();
+
+  if (invalidToken) {
+    c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 400, Date.now() - start));
+    return c.json({ error: "Invalid pageToken", code: ERROR_CODES.INVALID_INPUT }, 400);
+  }
 
   try {
     if (pageToken) {
@@ -118,8 +146,16 @@ channel.get("/:handle/popular", async (c) => {
 channel.get("/:handle/top", async (c) => {
   const db = c.get("db");
   const handle = readHandle(c);
-  const by = readTopBy(c);
+  const { by, invalid: invalidBy } = readTopBy(c);
   const start = Date.now();
+
+  if (invalidBy) {
+    c.executionCtx.waitUntil(logRequest(db, c.req.path, handle, "GET", 400, Date.now() - start));
+    return c.json(
+      { error: "Invalid 'by' value. Use latest, popular, or likes", code: ERROR_CODES.INVALID_INPUT },
+      400
+    );
+  }
 
   try {
     const video = await getTopVideo(db, handle, by, c.env, {
@@ -160,7 +196,7 @@ channel.get("/:handle/analytics", async (c) => {
   }
 });
 
-channel.post("/:handle/refresh", async (c) => {
+channel.post("/:handle/refresh", refreshAuthMiddleware, async (c) => {
   const db = c.get("db");
   const handle = readHandle(c);
   const start = Date.now();
