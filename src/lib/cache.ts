@@ -3,7 +3,7 @@ import type { Db } from "../db/client";
 import { channelCache, videosCache, handleResolutionCache } from "../db/schema";
 import type { ChannelProfile, VideoSummary, VideoPage } from "./types";
 
-interface CacheEntry<T> {
+export interface CacheEntry<T> {
   data: T;
   isStale: boolean;
 }
@@ -39,6 +39,55 @@ export async function setCachedChannel(
       target: channelCache.channelId,
       set: { data, source: data.source, fetchedAt: new Date(), expiresAt },
     });
+}
+
+export async function getCachedChannelAndVideosAnyFreshness(
+  db: Db,
+  channelId: string
+): Promise<{
+  channel: CacheEntry<ChannelProfile> | null;
+  recent: CacheEntry<VideoPage> | null;
+  popular: CacheEntry<VideoPage> | null;
+}> {
+  const [channelRows, recentRows, popularRows] = await db.batch([
+    db
+      .select({ data: channelCache.data, expiresAt: channelCache.expiresAt })
+      .from(channelCache)
+      .where(eq(channelCache.channelId, channelId))
+      .limit(1),
+    db
+      .select({ data: videosCache.data, expiresAt: videosCache.expiresAt })
+      .from(videosCache)
+      .where(and(eq(videosCache.channelId, channelId), eq(videosCache.kind, "recent")))
+      .limit(1),
+    db
+      .select({ data: videosCache.data, expiresAt: videosCache.expiresAt })
+      .from(videosCache)
+      .where(and(eq(videosCache.channelId, channelId), eq(videosCache.kind, "popular")))
+      .limit(1),
+  ]);
+
+  const now = new Date();
+
+  const channelRow = channelRows[0];
+  const channel = channelRow
+    ? { data: channelRow.data as ChannelProfile, isStale: channelRow.expiresAt < now }
+    : null;
+
+  const toVideoPage = (raw: VideoSummary[] | VideoPage): VideoPage =>
+    Array.isArray(raw) ? { videos: raw, nextPageToken: null } : raw;
+
+  const recentRow = recentRows[0];
+  const recent = recentRow
+    ? { data: toVideoPage(recentRow.data as VideoSummary[] | VideoPage), isStale: recentRow.expiresAt < now }
+    : null;
+
+  const popularRow = popularRows[0];
+  const popular = popularRow
+    ? { data: toVideoPage(popularRow.data as VideoSummary[] | VideoPage), isStale: popularRow.expiresAt < now }
+    : null;
+
+  return { channel, recent, popular };
 }
 
 export async function getCachedVideosAnyFreshness(

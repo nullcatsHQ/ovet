@@ -2,6 +2,7 @@ import { OvetError } from "../types";
 import type { ChannelProfile, VideoSummary } from "../types";
 import type { ResolvedInput } from "../resolve";
 import { ERROR_CODES } from "../constants";
+import { fetchWithTimeout } from "../fetch-timeout";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
@@ -19,7 +20,7 @@ function buildChannelUrl(resolved: ResolvedInput): string {
 
 async function fetchChannelHtml(resolved: ResolvedInput): Promise<string> {
   const url = buildChannelUrl(resolved);
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       "User-Agent": UA,
       "Accept-Language": "en-US,en;q=0.9",
@@ -138,7 +139,7 @@ export async function scrapeChannelVideos(
   const base = buildChannelUrl(resolved).replace("/about", "");
   const url = `${base}/${tabPath}`;
 
-  const res = await fetch(url, { headers: { "User-Agent": UA } });
+  const res = await fetchWithTimeout(url, { headers: { "User-Agent": UA } });
   if (!res.ok) {
     throw new OvetError(`Failed to fetch videos page (${res.status})`, 502, ERROR_CODES.SCRAPE_FETCH_FAILED);
   }

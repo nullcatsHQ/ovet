@@ -2,6 +2,7 @@ import { OvetError } from "../types";
 import type { ChannelProfile, VideoSummary, VideoPage } from "../types";
 import type { ResolvedInput } from "../resolve";
 import { ERROR_CODES, DEFAULTS } from "../constants";
+import { fetchWithTimeout } from "../fetch-timeout";
 
 const BASE = "https://www.googleapis.com/youtube/v3";
 
@@ -10,7 +11,7 @@ async function ytFetch(path: string, params: Record<string, string>, apiKey: str
   url.searchParams.set("key", apiKey);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
-  const res = await fetch(url.toString());
+  const res = await fetchWithTimeout(url.toString());
 
   if (res.status === 403) {
     const body = (await res.json().catch(() => null)) as { error?: { errors?: { reason?: string }[] } } | null;

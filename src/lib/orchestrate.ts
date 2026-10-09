@@ -4,6 +4,7 @@ import { resolveToChannelId, fetchChannelProfile, fetchChannelVideosPage } from 
 import { scrapeChannelProfile, scrapeChannelVideos } from "./youtube/scrape";
 import {
   getCachedChannelAnyFreshness,
+  getCachedChannelAndVideosAnyFreshness,
   setCachedChannel,
   getCachedVideosAnyFreshness,
   setCachedVideos,
@@ -12,6 +13,7 @@ import {
   getCachedHandleResolution,
   setCachedHandleResolution,
 } from "./cache";
+import type { CacheEntry } from "./cache";
 import { OvetError } from "./types";
 import type { ChannelProfile, VideoSummary, VideoPage, Env } from "./types";
 import type { ResolvedInput } from "./resolve";
@@ -33,7 +35,9 @@ interface ResolvedContext {
 function isApiUnavailableError(err: unknown): boolean {
   return (
     err instanceof OvetError &&
-    (err.code === ERROR_CODES.QUOTA_EXCEEDED || err.code === ERROR_CODES.API_FORBIDDEN)
+    (err.code === ERROR_CODES.QUOTA_EXCEEDED ||
+      err.code === ERROR_CODES.API_FORBIDDEN ||
+      err.code === ERROR_CODES.UPSTREAM_TIMEOUT)
   );
 }
 
@@ -90,32 +94,27 @@ async function resolveWithFallback(
   return { channelId, resolved, apiAvailable };
 }
 
-async function getChannelProfileResolved(
+async function resolveProfileFromEntry(
   db: Db,
   ctx: ResolvedContext,
   env: Env,
-  options: FetchOptions
+  options: FetchOptions,
+  entry: CacheEntry<ChannelProfile> | null
 ): Promise<ChannelProfile> {
   const ttl = readTtl(env);
   const { channelId, resolved, apiAvailable } = ctx;
 
-  if (options.bypassCache && channelId) {
-    await deleteCachedChannel(db, channelId);
+  if (entry && !entry.isStale) {
+    return entry.data;
   }
 
-  if (!options.bypassCache && ttl > 0 && channelId) {
-    const entry = await getCachedChannelAnyFreshness(db, channelId);
-    if (entry && !entry.isStale) {
-      return entry.data;
-    }
-    if (entry && entry.isStale && options.waitUntil && apiAvailable) {
-      options.waitUntil(
-        fetchChannelProfile(channelId, env.YOUTUBE_API_KEY)
-          .then((fresh) => setCachedChannel(db, channelId, fresh, ttl))
-          .catch(() => {})
-      );
-      return entry.data;
-    }
+  if (entry && entry.isStale && options.waitUntil && apiAvailable && channelId) {
+    options.waitUntil(
+      fetchChannelProfile(channelId, env.YOUTUBE_API_KEY)
+        .then((fresh) => setCachedChannel(db, channelId, fresh, ttl))
+        .catch(() => {})
+    );
+    return entry.data;
   }
 
   if (apiAvailable && channelId) {
@@ -143,33 +142,28 @@ async function getChannelProfileResolved(
   return scraped;
 }
 
-async function getChannelVideosResolved(
+async function resolveVideosFromEntry(
   db: Db,
   ctx: ResolvedContext,
   kind: "recent" | "popular",
   env: Env,
-  options: FetchOptions
+  options: FetchOptions,
+  entry: CacheEntry<VideoPage> | null
 ): Promise<VideoPage> {
   const ttl = readTtl(env);
   const { channelId, resolved, apiAvailable } = ctx;
 
-  if (options.bypassCache && channelId) {
-    await deleteCachedVideos(db, channelId, kind);
+  if (entry && !entry.isStale) {
+    return entry.data;
   }
 
-  if (!options.bypassCache && ttl > 0 && channelId) {
-    const entry = await getCachedVideosAnyFreshness(db, channelId, kind);
-    if (entry && !entry.isStale) {
-      return entry.data;
-    }
-    if (entry && entry.isStale && options.waitUntil && apiAvailable) {
-      options.waitUntil(
-        fetchChannelVideosPage(channelId, kind, env.YOUTUBE_API_KEY, DEFAULTS.VIDEO_MAX_RESULTS, null)
-          .then((fresh) => setCachedVideos(db, channelId, kind, fresh, "api", ttl))
-          .catch(() => {})
-      );
-      return entry.data;
-    }
+  if (entry && entry.isStale && options.waitUntil && apiAvailable && channelId) {
+    options.waitUntil(
+      fetchChannelVideosPage(channelId, kind, env.YOUTUBE_API_KEY, DEFAULTS.VIDEO_MAX_RESULTS, null)
+        .then((fresh) => setCachedVideos(db, channelId, kind, fresh, "api", ttl))
+        .catch(() => {})
+    );
+    return entry.data;
   }
 
   if (apiAvailable && channelId) {
@@ -196,6 +190,82 @@ async function getChannelVideosResolved(
     await setCachedVideos(db, channelId, kind, page, "scrape", ttl);
   }
   return page;
+}
+
+async function getChannelProfileResolved(
+  db: Db,
+  ctx: ResolvedContext,
+  env: Env,
+  options: FetchOptions
+): Promise<ChannelProfile> {
+  const ttl = readTtl(env);
+  const { channelId } = ctx;
+
+  if (options.bypassCache && channelId) {
+    await deleteCachedChannel(db, channelId);
+  }
+
+  const entry =
+    !options.bypassCache && ttl > 0 && channelId ? await getCachedChannelAnyFreshness(db, channelId) : null;
+
+  return resolveProfileFromEntry(db, ctx, env, options, entry);
+}
+
+async function getChannelVideosResolved(
+  db: Db,
+  ctx: ResolvedContext,
+  kind: "recent" | "popular",
+  env: Env,
+  options: FetchOptions
+): Promise<VideoPage> {
+  const ttl = readTtl(env);
+  const { channelId } = ctx;
+
+  if (options.bypassCache && channelId) {
+    await deleteCachedVideos(db, channelId, kind);
+  }
+
+  const entry =
+    !options.bypassCache && ttl > 0 && channelId ? await getCachedVideosAnyFreshness(db, channelId, kind) : null;
+
+  return resolveVideosFromEntry(db, ctx, kind, env, options, entry);
+}
+
+async function getProfileAndBothVideoKindsResolved(
+  db: Db,
+  ctx: ResolvedContext,
+  env: Env,
+  options: FetchOptions
+): Promise<{ profile: ChannelProfile; recentPage: VideoPage; popularPage: VideoPage }> {
+  const ttl = readTtl(env);
+  const { channelId } = ctx;
+
+  if (options.bypassCache && channelId) {
+    await Promise.all([
+      deleteCachedChannel(db, channelId),
+      deleteCachedVideos(db, channelId, "recent"),
+      deleteCachedVideos(db, channelId, "popular"),
+    ]);
+  }
+
+  if (options.bypassCache || ttl <= 0 || !channelId) {
+    const [profile, recentPage, popularPage] = await Promise.all([
+      resolveProfileFromEntry(db, ctx, env, options, null),
+      resolveVideosFromEntry(db, ctx, "recent", env, options, null),
+      resolveVideosFromEntry(db, ctx, "popular", env, options, null),
+    ]);
+    return { profile, recentPage, popularPage };
+  }
+
+  const { channel, recent, popular } = await getCachedChannelAndVideosAnyFreshness(db, channelId);
+
+  const [profile, recentPage, popularPage] = await Promise.all([
+    resolveProfileFromEntry(db, ctx, env, options, channel),
+    resolveVideosFromEntry(db, ctx, "recent", env, options, recent),
+    resolveVideosFromEntry(db, ctx, "popular", env, options, popular),
+  ]);
+
+  return { profile, recentPage, popularPage };
 }
 
 export async function getChannelProfile(
@@ -225,12 +295,7 @@ export async function getChannelProfileWithLatestVideo(
   options: FetchOptions = {}
 ) {
   const ctx = await resolveWithFallback(db, rawInput, env, options.bypassCache);
-
-  const [profile, recentPage, popularPage] = await Promise.all([
-    getChannelProfileResolved(db, ctx, env, options),
-    getChannelVideosResolved(db, ctx, "recent", env, options),
-    getChannelVideosResolved(db, ctx, "popular", env, options),
-  ]);
+  const { profile, recentPage, popularPage } = await getProfileAndBothVideoKindsResolved(db, ctx, env, options);
 
   const latestVideo = recentPage.videos[0] ?? null;
   const mostPopularVideo = popularPage.videos[0] ?? null;
@@ -291,12 +356,7 @@ export async function getChannelAnalytics(
   options: FetchOptions = {}
 ) {
   const ctx = await resolveWithFallback(db, rawInput, env, options.bypassCache);
-
-  const [profile, recentPage, popularPage] = await Promise.all([
-    getChannelProfileResolved(db, ctx, env, options),
-    getChannelVideosResolved(db, ctx, "recent", env, options),
-    getChannelVideosResolved(db, ctx, "popular", env, options),
-  ]);
+  const { profile, recentPage, popularPage } = await getProfileAndBothVideoKindsResolved(db, ctx, env, options);
 
   return {
     profile,
