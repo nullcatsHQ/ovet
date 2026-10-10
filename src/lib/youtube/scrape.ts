@@ -166,6 +166,8 @@ export async function scrapeChannelVideos(
       durationSeconds: null,
       tags: null,
       categoryId: null,
+      liveStatus: "none",
+      concurrentViewers: null,
     });
   }
 

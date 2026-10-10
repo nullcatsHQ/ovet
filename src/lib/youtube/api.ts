@@ -180,7 +180,7 @@ export async function fetchChannelVideosPage(
 
   const videosData = (await ytFetch(
     "videos",
-    { part: "snippet,statistics,contentDetails", id: ids.join(",") },
+    { part: "snippet,statistics,contentDetails,liveStreamingDetails", id: ids.join(",") },
     apiKey
   )) as {
     items?: {
@@ -192,33 +192,52 @@ export async function fetchChannelVideosPage(
         thumbnails?: { high?: { url: string }; medium?: { url: string } };
         tags?: string[];
         categoryId?: string;
+        liveBroadcastContent?: string;
       };
       statistics: { viewCount?: string; likeCount?: string; commentCount?: string };
       contentDetails: { duration: string };
+      liveStreamingDetails?: {
+        concurrentViewers?: string;
+      };
     }[];
   };
 
   const byId = new Map((videosData.items ?? []).map((v) => [v.id, v]));
   const orderedItems = ids.map((id) => byId.get(id)).filter((v): v is NonNullable<typeof v> => v !== undefined);
 
-  const videos = orderedItems.map((v) => ({
-    videoId: v.id,
-    title: v.snippet.title,
-    description: v.snippet.description,
-    thumbnailUrl: v.snippet.thumbnails?.high?.url ?? v.snippet.thumbnails?.medium?.url ?? "",
-    publishedAt: v.snippet.publishedAt,
-    viewCount: v.statistics.viewCount ? Number(v.statistics.viewCount) : null,
-    likeCount: v.statistics.likeCount ? Number(v.statistics.likeCount) : null,
-    commentCount: v.statistics.commentCount ? Number(v.statistics.commentCount) : null,
-    durationSeconds: parseIsoDuration(v.contentDetails.duration),
-    tags: v.snippet.tags?.length ? v.snippet.tags : null,
-    categoryId: v.snippet.categoryId ?? null,
-  }));
+  const videos = orderedItems.map((v) => {
+    const liveStatus = normalizeLiveStatus(v.snippet.liveBroadcastContent);
+
+    return {
+      videoId: v.id,
+      title: v.snippet.title,
+      description: v.snippet.description,
+      thumbnailUrl: v.snippet.thumbnails?.high?.url ?? v.snippet.thumbnails?.medium?.url ?? "",
+      publishedAt: v.snippet.publishedAt,
+      viewCount: v.statistics.viewCount ? Number(v.statistics.viewCount) : null,
+      likeCount: v.statistics.likeCount ? Number(v.statistics.likeCount) : null,
+      commentCount: v.statistics.commentCount ? Number(v.statistics.commentCount) : null,
+      durationSeconds: liveStatus === "none" ? parseIsoDuration(v.contentDetails.duration) : null,
+      tags: v.snippet.tags?.length ? v.snippet.tags : null,
+      categoryId: v.snippet.categoryId ?? null,
+      liveStatus,
+      concurrentViewers:
+        liveStatus === "live" && v.liveStreamingDetails?.concurrentViewers
+          ? Number(v.liveStreamingDetails.concurrentViewers)
+          : null,
+    };
+  });
 
   return { videos, nextPageToken: searchData.nextPageToken ?? null };
 }
 
+function normalizeLiveStatus(raw: string | undefined): "live" | "upcoming" | "none" {
+  if (raw === "live" || raw === "upcoming") return raw;
+  return "none";
+}
+
 function parseIsoDuration(iso: string): number | null {
+  if (iso === "P0D") return null;
   const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
   if (!match) return null;
   const [, h, m, s] = match;

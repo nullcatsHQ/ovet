@@ -43,6 +43,8 @@ export interface VideoSummary {
   durationSeconds: number | null;
   tags: string[] | null;
   categoryId: string | null;
+  liveStatus: "live" | "upcoming" | "none";
+  concurrentViewers: number | null;
 }
 
 export interface VideoPage {
